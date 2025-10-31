@@ -78,6 +78,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         spinner.setAdapter(adaptador);
 
         spinner.setOnItemSelectedListener(this);
+
+
     }
 
     @Override
