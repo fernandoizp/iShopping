@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#140c1c">
+<title>Lumbre</title>
+<style>
+  :root { --bg: #140c1c; --fg: #deeed6; --btn: #2a1d3a; --btn-hi: #4e5aa0; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #screen { image-rendering: pixelated; image-rendering: crisp-edges; display: block; box-shadow: 0 0 0 2px #2a1d3a, 0 8px 40px #000; }
+  #touch { display: none; }
+  body.touch #touch { display: flex; width: 100%; max-width: 520px; justify-content: space-between; align-items: center; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); box-sizing: border-box; }
+  body.touch { justify-content: flex-start; padding-top: env(safe-area-inset-top); }
+  @media (orientation: landscape) {
+    body.touch { justify-content: center; }
+    body.touch #touch { position: fixed; inset: 0; max-width: none; padding: 0 12px; pointer-events: none; }
+    body.touch #touch > * { pointer-events: auto; opacity: 0.55; }
+  }
+  .dpad { position: relative; width: 132px; height: 132px; }
+  .dpad div, .btns div, .sys div { position: absolute; background: var(--btn); border: 2px solid var(--btn-hi); color: var(--fg); font: bold 14px monospace; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+  .dpad [data-a="up"] { left: 44px; top: 0; width: 44px; height: 44px; }
+  .dpad [data-a="down"] { left: 44px; top: 88px; width: 44px; height: 44px; }
+  .dpad [data-a="left"] { left: 0; top: 44px; width: 44px; height: 44px; }
+  .dpad [data-a="right"] { left: 88px; top: 44px; width: 44px; height: 44px; }
+  .dpad [data-a="up left"] { left: 0; top: 0; width: 44px; height: 44px; opacity: 0; }
+  .dpad [data-a="up right"] { left: 88px; top: 0; width: 44px; height: 44px; opacity: 0; }
+  .dpad [data-a="down left"] { left: 0; top: 88px; width: 44px; height: 44px; opacity: 0; }
+  .dpad [data-a="down right"] { left: 88px; top: 88px; width: 44px; height: 44px; opacity: 0; }
+  .btns { position: relative; width: 150px; height: 132px; }
+  .btns div { border-radius: 50%; width: 58px; height: 58px; font-size: 18px; }
+  .btns [data-a="jump"] { right: 0; top: 18px; background: #8a2b3b; border-color: #d04648; }
+  .btns [data-a="attack"] { right: 70px; top: 52px; background: #30346d; border-color: #6dc2ca; }
+  .btns [data-a="dash"] { right: 22px; top: 86px; width: 42px; height: 42px; font-size: 12px; background: #854c30; border-color: #e8873a; }
+  .sys { position: relative; width: 60px; height: 132px; }
+  .sys div { width: 56px; height: 24px; font-size: 10px; border-radius: 12px; left: 2px; }
+  .sys [data-a="start"] { top: 40px; }
+  .sys [data-a="mute"] { top: 74px; }
+  .help { color: #4e4a4e; font: 11px monospace; margin-top: 10px; text-align: center; }
+  body.touch .help { display: none; }
+</style>
+</head>
+<body>
+  <canvas id="screen" width="240" height="160"></canvas>
+  <div id="touch">
+    <div class="dpad">
+      <div data-a="up">▲</div><div data-a="down">▼</div><div data-a="left">◀</div><div data-a="right">▶</div>
+      <div data-a="up left"></div><div data-a="up right"></div><div data-a="down left"></div><div data-a="down right"></div>
+    </div>
+    <div class="sys"><div data-a="start">START</div><div data-a="mute">SONIDO</div></div>
+    <div class="btns"><div data-a="jump">A</div><div data-a="attack">B</div><div data-a="dash">R</div></div>
+  </div>
+  <div class="help">Flechas mover · Z saltar · X atacar (↑/↓ + X: tajo vertical) · C impulso · Enter mapa · N sonido · también con mando</div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
