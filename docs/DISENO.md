@@ -2,7 +2,7 @@
 
 Todo lo marcado con **(?)** está sin decidir. Lo demás es una propuesta basada en lo que hemos hablado.
 
-Título de trabajo: **LUMBRE** (provisional, ver "Nombres" al final).
+Título de trabajo: **PARADISE** (provisional, como el complejo).
 
 ## Premisa
 
@@ -32,15 +32,27 @@ Cada zona imita un paisaje distinto, hecho a mano o con maquinaria. Esa es la ex
 
 Cada zona tiene un jefe. El mapa es un nudo: casi todas las zonas se enlazan entre sí por atajos que se abren con habilidades de otras zonas, como en Hollow Knight.
 
-## Protagonista **(?)**
+## Protagonista
 
-Ideas a elegir:
+Un **inspector extranjero** enviado a investigar la desaparición del gobernante y el estado del complejo. Lo oficial es el informe. Lo personal es que **un familiar suyo murió por culpa del tirano** (decisión: pariente cercano, detalle por definir **(?)**). Esa herida es lo que le hace seguir cuando el trabajo ya no lo exige.
 
-- **Un inspector extranjero**, enviado por otro país para documentar lo que queda del régimen.
-- **Un periodista** que lleva años siguiendo al tirano.
-- **Un familiar** de alguien que desapareció dentro de la hacienda.
+Consecuencias para el diseño:
 
-Cada opción da un tono distinto. La tercera es la más emotiva y justifica que lo arriesgue todo.
+- Empieza profesional y distante. A medida que avanza, el caso se vuelve personal.
+- Hay una pregunta sin responder para él: ¿qué relación tuvo su familiar con la hacienda? Se va resolviendo con coleccionables y NPCs.
+- El final puede cambiar según lo que decida hacer con la verdad (entregarla, vengarse, dejarla enterrada).
+
+## El tirano
+
+Inspirado en la figura del **capo con poder de estado**: un hombre que se hizo rico fuera de la ley, compró el país y se presentó como benefactor. Construyó la hacienda como monumento a sí mismo, con su propio parque, sus animales exóticos y su gente armada.
+
+Rasgos para el juego:
+
+- Populista: repartía dinero y obras, y mucha gente del país lo recuerda con cariño. Eso da NPCs con opiniones enfrentadas.
+- Excesivo: la hacienda mezcla paisajes de medio mundo porque quería tenerlo todo.
+- Su paradero es el misterio central. Su importancia se decide más adelante **(?)**: puede ser jefe final, víctima o algo peor.
+
+Es un personaje ficticio, con otro nombre y otra historia que cualquier persona real.
 
 ## Qué pesa en el juego
 
@@ -63,7 +75,7 @@ Buscas algo cercano a Blasphemous y Hollow Knight. Hay que ser claros sobre dón
 
 ## Plan de trabajo sugerido
 
-1. Decidir nombres, protagonista y tono de las primeras zonas.
+1. Decidir nombres definitivos (país, tirano) y tono de las primeras zonas. *Protagonista y título provisional: hechos.*
 2. Prueba visual de los Jardines (una sala, resolución más alta).
 3. Rehacer los Jardines de Entrada con la nueva ambientación, un jefe y su habilidad.
 4. Añadir sistemas de fondo: parry, curación, moneda, marcadores de mapa, diálogos.
@@ -72,6 +84,6 @@ Buscas algo cercano a Blasphemous y Hollow Knight. Hay que ser claros sobre dón
 ## Nombres **(?)**
 
 - **País:** pendiente. Algo con sonido ibérico pero inventado.
-- **Hacienda:** "Nápoles" funciona como nombre de trabajo. Si prefieres algo propio y sin referencias, alternativas: *El Edén*, *Villa Aurora*, *La Dehesa Dorada*.
+- **Hacienda:** "Nápoles" como nombre de trabajo. Alternativas por si luego quieres algo propio: *El Edén*, *Villa Aurora*, *La Dehesa Dorada*.
 - **Tirano:** pendiente. Conviene un apodo más que un nombre (*El Patrón*, *El Benefactor*, *Su Excelencia*).
-- **Título del juego:** LUMBRE era para la fantasía genérica anterior y probablemente ya no encaja.
+- **Título del juego:** PARADISE, provisional.
