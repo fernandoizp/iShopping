@@ -6,11 +6,11 @@ Título de trabajo: **PARADISE** (provisional, como el complejo).
 
 ## Premisa
 
-Un país con aire español, sin nombre todavía **(?)**, estuvo décadas bajo un gobernante que nadie eligió. Hizo mala fama con sus vecinos y se rodeó de lujo. Su obra favorita fue **la Hacienda Nápoles**, un complejo privado que imitaba lo mejor del mundo: paisajes, arquitectura, tecnología. Era su paraíso particular.
+Un país con aire español, sin nombre todavía **(?)**, estuvo décadas bajo un gobernante que nadie eligió (lo llaman *el rey*, aunque el título sea suyo y de nadie más). Hizo mala fama con sus vecinos y se rodeó de lujo. Su obra favorita fue **la Hacienda Nápoles**, un complejo privado que imitaba lo mejor del mundo: paisajes, arquitectura, tecnología. Era su paraíso particular.
 
 El tirano ha desaparecido. La hacienda sigue ahí, encendida a medias, con sus máquinas todavía funcionando.
 
-El protagonista llega de fuera para averiguar qué pasó con el gobernante, con el país y con el paraíso.
+El protagonista, un soldado muerto en una de sus guerras y devuelto a la vida dentro de una máquina, viaja a la hacienda para averiguar qué pasó con el gobernante, con el país y con él mismo.
 
 ### Tono
 
@@ -34,13 +34,18 @@ Cada zona tiene un jefe. El mapa es un nudo: casi todas las zonas se enlazan ent
 
 ## Protagonista
 
-Un **inspector extranjero** enviado a investigar la desaparición del gobernante y el estado del complejo. Lo oficial es el informe. Lo personal es que **un familiar suyo murió por culpa del tirano** (decisión: pariente cercano, detalle por definir **(?)**). Esa herida es lo que le hace seguir cuando el trabajo ya no lo exige.
+Un **androide humanoide gris** que fue una persona. Murió como soldado en la **guerra que el gobernante provocó en Italia**.
 
-Consecuencias para el diseño:
+Después de la guerra, el gobernante lanzó un **software para "vivir para siempre"**: copiar los recuerdos de una persona a una máquina. Se vendió como un regalo al pueblo. En realidad era una jugada maquiavélica cuyo propósito real está por decidir **(?)** (control, mano de obra, un ejército que no muere, o su propia inmortalidad).
 
-- Empieza profesional y distante. A medida que avanza, el caso se vuelve personal.
-- Hay una pregunta sin responder para él: ¿qué relación tuvo su familiar con la hacienda? Se va resolviendo con coleccionables y NPCs.
-- El final puede cambiar según lo que decida hacer con la verdad (entregarla, vengarse, dejarla enterrada).
+El protagonista despierta en ese cuerpo de máquina y viaja a la hacienda para saber qué pasó con el gobernante y qué le hicieron a él.
+
+Ideas para el diseño:
+
+- **Aspecto:** cuerpo de metal gris, articulaciones a la vista, rostro liso con un visor luminoso. Lleva **ropa encima** (capa con capucha bajada, túnica, cinturón), como si intentara seguir pareciendo humano.
+- **La gran contradicción:** existe gracias a la tecnología del tirano al que persigue.
+- **Recuerdos como mecánica:** fragmentos de memoria repartidos por la hacienda que reconstruyen quién era. Pueden dar habilidades o desbloquear el final.
+- **Pregunta de fondo:** ¿sigue siendo la misma persona, o solo una copia que cree serlo?
 
 ## El tirano
 
@@ -51,6 +56,8 @@ Rasgos para el juego:
 - Populista: repartía dinero y obras, y mucha gente del país lo recuerda con cariño. Eso da NPCs con opiniones enfrentadas.
 - Excesivo: la hacienda mezcla paisajes de medio mundo porque quería tenerlo todo.
 - Su paradero es el misterio central. Su importancia se decide más adelante **(?)**: puede ser jefe final, víctima o algo peor.
+
+- Provocó una **guerra en Italia** y, tras ella, lanzó el software de "vida eterna" que convierte recuerdos en máquinas.
 
 Es un personaje ficticio, con otro nombre y otra historia que cualquier persona real.
 
@@ -75,7 +82,7 @@ Buscas algo cercano a Blasphemous y Hollow Knight. Hay que ser claros sobre dón
 
 ## Plan de trabajo sugerido
 
-1. Decidir nombres definitivos (país, tirano) y tono de las primeras zonas. *Protagonista y título provisional: hechos.*
+1. Decidir nombres definitivos (país, tirano, protagonista) y el propósito real del software. *Protagonista (androide) y título provisional: hechos.*
 2. Prueba visual de los Jardines (una sala, resolución más alta).
 3. Rehacer los Jardines de Entrada con la nueva ambientación, un jefe y su habilidad.
 4. Añadir sistemas de fondo: parry, curación, moneda, marcadores de mapa, diálogos.
