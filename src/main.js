@@ -1,692 +1,549 @@
-// LUMBRE: un metroidvania de pixel art al estilo Game Boy Advance.
-import { W, H, TILE, PAL, gba, makeCanvas, drawText, drawTextC, textWidth } from './gfx.js';
-import { SHRINE, FLAME, TORCH, ALTAR, GLOW, HUD_FLAME, HUD_FLAME_EMPTY, PLAYER, ORB, ORB_FIRE } from './art.js';
-import { AREAS, buildTileset, renderRoomTiles, buildBackground, drawBackground } from './tiles.js';
-import { ROOMS, loadRoom, roomAt, SCREEN_W, SCREEN_H } from './world.js';
-import { Player, Crawler, Bat, Spitter, Boss, Pickup, overlap } from './entities.js';
-import { Input } from './input.js';
-import { sfx, unlockAudio, playMusic, toggleMute, MUSIC, stopMusic } from './audio.js';
+// PARADISE · un metroidvania sobre la Hacienda Nápoles.
+import { W, H, mk, text, wrap, FONT_TITLE, glowSprite } from './core/gfx.js';
+import { Input } from './core/input.js';
+import { sfx, unlockAudio, playMusic, stopMusic, toggleMute, setAmbience } from './core/audio.js';
+import { FX } from './core/fx.js';
+import { postProcess } from './core/post.js';
+import { ZONES } from './world/zones.js';
+import { buildWorld, roomAt, SW, SH } from './world/rooms.js';
+import { renderRoom, renderBackWall } from './world/render.js';
+import { buildParallax, drawParallax } from './world/background.js';
+import { getDeco, drawFlame } from './world/deco.js';
+import { Hero } from './actors/hero.js';
+import { makeEnemy, Projectile } from './actors/enemies.js';
+import { makeBoss } from './actors/bosses.js';
+import { Terminal, Npc, Pickup, Elevator, Record, Orb } from './actors/objects.js';
+import { overlap } from './actors/physics.js';
+import { NPCS, RECORDS, MEMORIES, ITEMS, INTRO, ending } from './story.js';
+import { drawHUD, drawZoneBanner, drawPrompt, drawDialog, drawPopup, drawSubtitle, drawMap } from './ui.js';
 
-const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d');
-canvas.width = W; canvas.height = H;
-ctx.imageSmoothingEnabled = false;
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d');
+cv.width = W; cv.height = H; ctx.imageSmoothingEnabled = false;
 
 function resize() {
-  const touch = document.body.classList.contains('touch');
-  const availH = innerHeight * (touch && innerHeight > innerWidth ? 0.55 : 1);
-  const s = Math.max(1, Math.min(innerWidth / W, availH / H));
-  const k = s >= 2 ? Math.floor(s) : s;
-  canvas.style.width = `${W * k}px`;
-  canvas.style.height = `${H * k}px`;
+  const touch = document.body.classList.contains('touch'), portrait = innerHeight > innerWidth;
+  const s = Math.min(innerWidth / W, (innerHeight * (touch && portrait ? 0.6 : 1)) / H);
+  const k = s >= 1 ? (s >= 2 ? Math.floor(s) : s) : s;
+  cv.style.width = `${Math.floor(W * k)}px`; cv.style.height = `${Math.floor(H * k)}px`;
 }
 addEventListener('resize', resize);
 
-const SAVE_KEY = 'lumbre-save-v1';
-const TOTAL_ITEMS = 4; // 2 vasijas + 2 reliquias
-
-function newSave() {
-  return { room: 'santuario', sx: null, sy: null, maxHp: 4, abilities: { double: false, dash: false }, taken: [], bossDead: false, time: 0, visited: ['santuario'] };
-}
-function loadSave() {
-  try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && s.room ? s : null; } catch { return null; }
-}
+const SAVE_KEY = 'paradise-save-v1';
+const BOSS_DROP = { gigante: 'dash', cuelebre: 'wall', centinela: 'key' };
+const BOSS_MUSIC = { patron: 'final' };
+const newSave = () => ({ room: 'puerta', tx: null, ty: null, maxHp: 5, abilities: { double: false, dash: false, wall: false, key: false }, flags: {}, memories: [], cores: [], broken: [], visited: [], time: 0 });
+function loadSave() { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && s.room ? s : null; } catch { return null; } }
 
 class Game {
   constructor() {
-    this.input = new Input();
-    this.input.onAny = () => unlockAudio();
+    this.input = new Input(); this.input.onAny = () => unlockAudio();
     addEventListener('pointerdown', () => unlockAudio());
-    this.rooms = ROOMS.map(loadRoom);
-    this.tilesets = {};
-    this.backgrounds = {};
-    for (const k of Object.keys(AREAS)) { this.tilesets[k] = buildTileset(k); this.backgrounds[k] = buildBackground(k); }
-    this.state = 'title';
-    this.menu = 0;
-    this.t = 0;
-    this.particles = [];
-    this.fade = 0;
-    this.darkness = makeCanvas(W, H);
+    this.fx = new FX();
+    this.world = buildWorld();
+    this.byId = Object.fromEntries(this.world.map((r) => [r.id, r]));
+    this.cache = {}; this.bgs = {};
+    this.state = 'title'; this.t = 0; this.menu = 0;
     this.saved = loadSave();
+    this.shakeP = 0; this.shakeT = 0; this.stop = 0; this.fade = 0;
+    this.camX = 0; this.camY = 0;
   }
 
-  // ---------- Partida ----------
-  start(fromSave) {
-    this.save = fromSave && this.saved ? JSON.parse(JSON.stringify(this.saved)) : newSave();
-    this.save.visited ||= [this.save.room];
-    const room = this.rooms.find((r) => r.id === this.save.room) || this.rooms[0];
+  // ───────────── Partida ─────────────
+  start(cont) {
+    this.save = cont && this.saved ? JSON.parse(JSON.stringify(this.saved)) : newSave();
+    for (const k of this.save.broken) { const [id, ij] = k.split(':'), [i, j] = ij.split(',').map(Number); if (this.byId[id]) this.byId[id].tiles[j][i] = '.'; }
+    if (this.save.abilities.key) this.unlockSeals(false);
+    const room = this.byId[this.save.room] || this.world[0];
     let x, y;
-    if (this.save.sx != null) { x = this.save.sx; y = this.save.sy; }
-    else {
-      const p = room.spawns.find((s) => s.type === 'P') || room.spawns.find((s) => s.type === 'S');
-      x = p.i * 16 + 4; y = p.j * 16;
-    }
-    this.player = new Player(x, y, this.save);
-    this.enterRoom(room, true);
-    this.state = 'play';
-    this.fade = 30;
-    this.banner = { text: AREAS[room.area].name, t: 150 };
-    this.toast = null;
+    if (this.save.tx != null) { x = this.save.tx; y = this.save.ty; }
+    else { const s = room.ents.find((e) => e.type === 'start'); x = s.x * 16 + 8; y = s.y * 16; }
+    this.hero = new Hero(x - 6, y - 36, this.save);
+    this.enterRoom(room);
+    this.snapCamera();
+    this.state = 'play'; this.fade = 40;
+    this.dialog = null; this.popup = null; this.sub = null; this.lastZone = null;
+    this.banner = { zone: ZONES[room.zone], t: 1 };
+    this.lastZone = room.zone;
   }
 
-  enterRoom(room, snap) {
-    const prevArea = this.room?.area;
+  persist() {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch {}
+    this.saved = JSON.parse(JSON.stringify(this.save));
+  }
+
+  enterRoom(room) {
     this.room = room;
-    // Copia de tiles por si se rompen muros o se cierran puertas
-    room.tiles = room.tiles.map((r) => r.slice());
-    if (this.broken) for (const k of this.broken) { const [id, i, j] = k.split(','); if (id === room.id) room.tiles[+j][+i] = '.'; }
-    this.enemies = []; this.projectiles = []; this.pickups = []; this.shrines = []; this.altar = null;
-    for (const s of room.spawns) {
-      const x = s.i * 16, y = s.j * 16;
-      switch (s.type) {
-        case 'c': this.enemies.push(new Crawler(x, y)); break;
-        case 'b': this.enemies.push(new Bat(x, y)); break;
-        case 'f': this.enemies.push(new Spitter(x, y)); break;
-        case 'B': if (!this.save.bossDead) { this.boss = new Boss(x, y); this.enemies.push(this.boss); } break;
-        case 'S': this.shrines.push({ x, y: y - 16, w: 16, h: 32 }); break;
-        case 'A': this.altar = { x: x - 8, y: y - 8, w: 32, h: 24 }; break;
-        case 'D': case 'H': case '+': {
-          const id = `${room.id}:${s.i},${s.j}`;
-          if (!this.save.taken.includes(id)) {
-            const type = s.type === 'D' ? 'double' : s.type === 'H' ? 'dash' : 'heart';
-            this.pickups.push(new Pickup(type, x + 3, y + 3, id));
-          }
-          break;
-        }
+    for (const row of room.tiles) for (let i = 0; i < row.length; i++) if (row[i] === 'G') row[i] = '.';
+    if (!this.cache[room.id]) {
+      const z = ZONES[room.zone];
+      this.cache[room.id] = { tiles: renderRoom(room, z), back: z.indoor ? renderBackWall(room, z) : null };
+    }
+    const z = ZONES[room.zone];
+    if (!z.indoor && !this.bgs[room.zone]) this.bgs[room.zone] = buildParallax(room.zone, z);
+    this.enemies = []; this.objs = []; this.projectiles = []; this.orbs = []; this.boss = null;
+    this.decos = room.deco.map((d) => ({ ...d, def: getDeco(d.kind, z, room.zone), X: d.x * 16 + 8, Y: d.y * 16 })).filter((d) => d.def);
+    for (const e of room.ents) {
+      const X = e.x * 16 + 8, Y = e.y * 16;
+      switch (e.type) {
+        case 'terminal': this.objs.push(new Terminal(X, Y)); break;
+        case 'npc': this.objs.push(new Npc(X, Y, e.id)); break;
+        case 'enemy': this.enemies.push(makeEnemy(e.kind, X, Y)); break;
+        case 'boss': if (!this.save.flags[e.kind + 'Dead']) this.boss = makeBoss(e.kind, X); break;
+        case 'item': if (!this.save.abilities[e.ability]) this.objs.push(new Pickup('item', X, Y, { ability: e.ability })); break;
+        case 'memory': if (!this.save.memories.includes(e.n)) this.objs.push(new Pickup('memory', X, Y, { n: e.n, hidden: e.hidden && !this.save.flags[e.hidden] ? e.hidden : null })); break;
+        case 'core': if (!this.save.cores.includes(e.n)) this.objs.push(new Pickup('core', X, Y, { n: e.n })); break;
+        case 'elevator': this.objs.push(new Elevator(X, Y, { to: e.to, eid: e.id, on: !e.flag || !!this.save.flags[e.flag], flag: e.flag })); break;
+        case 'record': this.objs.push(new Record(X, Y, { id: e.id })); break;
       }
     }
-    if (!room.boss) this.boss = null;
-    this.tileCanvas = renderRoomTiles(room, this.tilesets[room.area]);
-    this.motes = Array.from({ length: 14 }, () => ({ x: Math.random() * room.w * 16, y: Math.random() * room.h * 16, p: Math.random() * 6 }));
+    // tras derrotar a un jefe, su recompensa sigue esperando si no se recogió
+    if (room.boss && this.save.flags[room.boss + 'Dead']) {
+      const ab = BOSS_DROP[room.boss];
+      if (ab && !this.save.abilities[ab]) this.objs.push(new Pickup('item', room.W * 8, 15 * 16 - 8, { ability: ab }));
+    }
     if (!this.save.visited.includes(room.id)) this.save.visited.push(room.id);
-    if (prevArea && prevArea !== room.area) this.banner = { text: AREAS[room.area].name, t: 150 };
-    if (!room.boss || this.save.bossDead) playMusic(MUSIC[room.area]);
-    else stopMusic();
-    if (snap) this.snapCamera();
+    if (this.lastZone && this.lastZone !== room.zone) this.banner = { zone: z, t: 1 };
+    this.lastZone = room.zone;
+    if (!this.boss || this.boss.state === 'sleep') playMusic(z.music);
+    setAmbience(z.amb);
+    this.bossBarT = 0; this.bossBanner = null; this.endingT = this.endingT || 0;
   }
 
-  // Depuración: __game.warp('cavernas')
-  warp(id, i, j) {
-    const room = this.rooms.find((r) => r.id === id);
-    const s = room.spawns.find((q) => q.type === 'S' || q.type === 'P');
-    this.player.x = i != null ? i * 16 + 4 : s ? s.i * 16 + 4 : 24;
-    this.player.y = j != null ? j * 16 : s ? s.j * 16 : room.h * 16 - 48;
-    this.player.lastSafe = { x: this.player.x, y: this.player.y };
-    this.respawnT = 0;
-    this.enterRoom(room, true);
+  // Depuración: __game.warp('molino', 5, 15)
+  warp(id, tx, ty) {
+    const room = this.byId[id], h = this.hero;
+    const t = room.ents.find((e) => e.type === 'terminal' || e.type === 'start' || e.type === 'elevator');
+    h.x = (tx ?? t?.x ?? 4) * 16 + 2; h.y = (ty ?? t?.y ?? room.H - 2) * 16 - h.h; h.vx = h.vy = 0;
+    h.lastSafe = { x: h.x, y: h.y }; this.respawnT = 0;
+    this.enterRoom(room); this.snapCamera();
   }
 
   snapCamera() {
-    const p = this.player, r = this.room;
-    this.camX = Math.max(0, Math.min(r.w * 16 - W, p.cx - W / 2));
-    this.camY = Math.max(0, Math.min(r.h * 16 - H, p.cy - H / 2));
+    const h = this.hero, r = this.room;
+    this.camX = Math.max(0, Math.min(r.W * 16 - W, h.cx - W / 2));
+    this.camY = Math.max(0, Math.min(r.H * 16 - H, h.cy - H / 2));
   }
 
   checkTransition() {
-    const p = this.player, r = this.room;
-    const lx = p.cx, ly = p.cy;
-    if (lx >= 0 && ly >= 0 && lx < r.w * 16 && ly < r.h * 16) return;
-    const wx = r.px + lx, wy = r.py + ly;
-    const next = roomAt(this.rooms, wx, wy);
-    if (!next) { p.x = Math.max(0, Math.min(r.w * 16 - p.w, p.x)); return; }
-    const goingUp = ly < 0;
-    p.x += r.px - next.px; p.y += r.py - next.py;
-    p.lastSafe = { x: p.x, y: p.y };
-    p.scarf.forEach((s) => { s.x += r.px - next.px; s.y += r.py - next.py; });
-    p.trail = [];
-    if (goingUp) { p.vy = Math.min(p.vy, -5.8); p.noCut = true; p.airJumps = p.abilities.double ? 1 : 0; }
-    this.enterRoom(next, true);
-    this.fade = 8;
+    const h = this.hero, r = this.room;
+    if (h.cx >= 0 && h.cy >= 0 && h.cx < r.W * 16 && h.cy < r.H * 16) return;
+    const next = roomAt(this.world, r.px + h.cx, r.py + h.cy);
+    if (!next) { h.x = Math.max(0, Math.min(r.W * 16 - h.w, h.x)); h.y = Math.min(h.y, r.H * 16 - h.h); return; }
+    const up = h.cy < 0;
+    const dx = r.px - next.px, dy = r.py - next.py;
+    h.x += dx; h.y += dy; for (const c of h.cape) { c.x += dx; c.y += dy; } h.trail = [];
+    h.lastSafe = { x: h.x, y: h.y };
+    if (up) { h.vy = Math.min(h.vy, -7.4); h.noCut = true; h.airJumps = h.ab.double ? 1 : 0; }
+    this.camX += dx; this.camY += dy;
+    this.enterRoom(next);
+    this.fade = 6;
   }
 
-  // ---------- Eventos ----------
-  particle(x, y, vx, vy, life, color, grav = 0.05) {
-    if (this.particles.length > 300) return;
-    this.particles.push({ x, y, vx, vy, life, max: life, color: gba(color), grav });
-  }
-  burst(x, y, n, color) {
-    for (let k = 0; k < n; k++) {
-      const a = Math.random() * Math.PI * 2, s = 0.5 + Math.random() * 2;
-      this.particle(x, y, Math.cos(a) * s, Math.sin(a) * s - 0.5, 15 + Math.random() * 15, color, 0.08);
-    }
-  }
-  shake(power, frames) { this.shakeP = Math.max(this.shakeP || 0, power); this.shakeT = Math.max(this.shakeT || 0, frames); }
-  hitstop(f) { this.stop = Math.max(this.stop || 0, f); }
+  // ───────────── API para los actores ─────────────
+  shake(p, f) { this.shakeP = Math.max(this.shakeP, p); this.shakeT = Math.max(this.shakeT, f); }
+  hitstop(f) { this.stop = Math.max(this.stop, f); }
+  hittables() { const out = [...this.enemies]; if (this.boss && !this.boss.dead) { out.push(this.boss); if (this.boss.extraHittables) out.push(...this.boss.extraHittables()); } return out; }
+  shoot(type, x, y, tx, ty) { const a = Math.atan2(ty - y, tx - x), sp = 2; this.projectiles.push(new Projectile(type, x, y, Math.cos(a) * sp, Math.sin(a) * sp)); }
+  shootRaw(type, x, y, vx, vy, grav) { this.projectiles.push(new Projectile(type, x, y, vx, vy, grav)); }
+  spawnOrb(x, y) { for (let k = 0; k < 2; k++) this.orbs.push(new Orb(x, y)); }
+  spawnEnemy(kind, x, y) { const e = makeEnemy(kind, x, y); this.enemies.push(e); this.fx.burst(x, y - 10, 16, '#3ee8ff'); }
+  sfxPick() { sfx('select'); }
+  say(str, dur = 150) { this.sub = { text: str, t: dur, max: dur }; }
 
-  hurtPlayer(dmg, fromX, spike) {
-    const p = this.player;
-    if (!p.hurt(this, dmg, fromX)) return;
-    this.shake(3, 12); this.hitstop(5);
-    this.burst(p.cx, p.cy, 10, PAL.r);
-    if (p.dead) { this.state = 'dead'; this.deadT = 0; stopMusic(); return; }
-    if (spike) this.respawnT = 26;
+  hurtHero(dmg, fromX, spike) {
+    const h = this.hero;
+    if (!h.hurt(this, dmg, fromX)) return;
+    this.shake(5, 14); this.hitstop(6);
+    this.fx.burst(h.cx, h.cy, 14, '#7fe8ff'); this.fx.oil(h.cx, h.cy, 8, 1);
+    if (h.dead) { this.state = 'dead'; this.deadT = 0; stopMusic(); sfx('kill'); return; }
+    if (spike) this.respawnT = 28;
   }
 
   breakTile(i, j) {
-    this.room.tiles[j][i] = '.';
-    (this.broken ||= new Set()).add(`${this.room.id},${i},${j}`);
-    this.tileCanvas = renderRoomTiles(this.room, this.tilesets[this.room.area]);
-    sfx('break'); this.shake(2, 8);
-    this.burst(i * 16 + 8, j * 16 + 8, 14, this.tilesetColor());
-  }
-  tilesetColor() { return AREAS[this.room.area].stone[3]; }
-
-  collect(pk) {
-    const p = this.player;
-    if (pk.type === 'health') {
-      if (p.hp < p.maxHp) { p.hp++; sfx('heal'); }
-      return;
-    }
-    this.save.taken.push(pk.id);
-    this.burst(pk.x + 5, pk.y + 5, 24, PAL.y);
-    if (pk.type === 'heart') {
-      this.save.maxHp++; p.maxHp++; p.hp = p.maxHp;
-      sfx('pickup');
-      this.showMessage(['VASIJA DE BRASAS', 'TU LLAMA CRECE: +1 VIDA']);
-    } else if (pk.type === 'double') {
-      this.save.abilities.double = true;
-      sfx('relic');
-      this.showMessage(['ALAS DE CENIZA', 'PULSA SALTAR EN EL AIRE', 'PARA HACER UN DOBLE SALTO']);
-    } else if (pk.type === 'dash') {
-      this.save.abilities.dash = true;
-      sfx('relic');
-      this.showMessage(['ZARPAZO DE BRASA', 'PULSA C / L PARA', 'IMPULSARTE HACIA DELANTE']);
-    }
-  }
-
-  showMessage(lines) { this.message = { lines, t: 0 }; this.state = 'message'; }
-
-  doSave(shrine) {
-    const p = this.player;
-    this.save.room = this.room.id;
-    this.save.sx = shrine.x + 4; this.save.sy = shrine.y + 16;
-    p.hp = p.maxHp;
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch {}
-    this.saved = JSON.parse(JSON.stringify(this.save));
-    sfx('save');
-    this.toast = { text: 'PARTIDA GUARDADA', t: 120 };
-    for (let k = 0; k < 20; k++) this.particle(shrine.x + 8, shrine.y + 4, (Math.random() - 0.5) * 2, -Math.random() * 2, 40, k % 2 ? PAL.y : PAL.o, -0.01);
-  }
-
-  onBossWake() {
-    // Cierra las puertas de la arena
     const r = this.room;
-    for (let j = 6; j <= 8; j++) { r.tiles[j][0] = '#'; r.tiles[j][r.w - 1] = '#'; }
-    this.tileCanvas = renderRoomTiles(r, this.tilesets[r.area]);
-    sfx('door');
-    this.banner = { text: 'COLOSO DE MUSGO', t: 140, boss: true };
-    setTimeout(() => playMusic(MUSIC.boss), 900);
+    r.tiles[j][i] = '.';
+    this.save.broken.push(`${r.id}:${i},${j}`);
+    this.cache[r.id].tiles.getContext('2d').clearRect(i * 16, j * 16, 16, 16);
+    sfx('break'); this.shake(3, 8);
+    this.fx.burst(i * 16 + 8, j * 16 + 8, 16, ZONES[r.zone].ramp[3], 3);
+    for (let k = 0; k < 6; k++) this.fx.spark(i * 16 + Math.random() * 16, j * 16 + Math.random() * 16, (Math.random() - 0.5) * 3, -Math.random() * 3, ZONES[r.zone].ramp[2], 40, 0.25, 3, false);
   }
-  onBossDying() { stopMusic(); }
+
+  unlockSeals(animate) {
+    for (const r of this.world) for (let j = 0; j < r.H; j++) for (let i = 0; i < r.W; i++) if (r.tiles[j][i] === 'L') {
+      r.tiles[j][i] = '.';
+      if (this.cache[r.id]) this.cache[r.id].tiles.getContext('2d').clearRect(i * 16, j * 16, 16, 16);
+    }
+    if (animate) { sfx('door'); this.shake(4, 20); }
+  }
+
+  setGates(closed) {
+    const r = this.room;
+    for (const d of r.doors) for (let k = d.start; k < d.start + d.size; k++) for (let dd = 0; dd < 2; dd++) {
+      let i, j;
+      if (d.side === 'L') { i = dd; j = k; } else if (d.side === 'R') { i = r.W - 1 - dd; j = k; } else continue;
+      if (closed && r.tiles[j][i] === '.') r.tiles[j][i] = 'G';
+      if (!closed && r.tiles[j][i] === 'G') r.tiles[j][i] = '.';
+    }
+    sfx('door');
+  }
+
+  onBossWake(b) {
+    this.setGates(true); this.shake(3, 20);
+    playMusic(BOSS_MUSIC[b.kind] || 'boss');
+    this.bossBanner = { name: b.name, title: b.title, t: 1 };
+    this.bossBarT = 1;
+  }
+  onBossDying() { stopMusic(); this.hitstop(18); }
   onBossDead(b) {
-    this.save.bossDead = true;
-    const r = this.room;
-    for (let j = 6; j <= 8; j++) { r.tiles[j][0] = '.'; r.tiles[j][r.w - 1] = '.'; }
-    this.tileCanvas = renderRoomTiles(r, this.tilesets[r.area]);
-    sfx('door');
-    this.burst(b.x + 12, b.y + 14, 40, PAL.y);
-    this.player.hp = this.player.maxHp;
-    this.toast = { text: 'EL CAMINO ESTÁ ABIERTO', t: 160 };
-    playMusic(MUSIC.keep);
+    this.save.flags[b.kind + 'Dead'] = true;
+    this.setGates(false);
+    this.fx.burst(b.hx ?? b.x, (b.hy ?? b.y) - 40, 40, '#ffe08a', 4);
+    this.hero.hp = this.hero.maxHp;
+    const ab = BOSS_DROP[b.kind];
+    if (ab) this.objs.push(new Pickup('item', this.room.W * 8, 15 * 16 - 8, { ability: ab }));
+    if (b.kind === 'centinela') for (const o of this.objs) if (o.type === 'elevator') o.on = true;
+    if (b.kind === 'patron') {
+      for (const o of this.objs) if (o.type === 'memory') o.hidden = null;
+      this.endingT = 1;
+    }
+    playMusic(ZONES[this.room.zone].music);
+    this.persist();
   }
 
-  // ---------- Bucle ----------
+  // ───────────── Interacción ─────────────
+  interact(o) {
+    const s = this.save;
+    if (o.type === 'terminal') {
+      s.room = this.room.id; s.tx = o.x; s.ty = o.y;
+      this.hero.hp = this.hero.maxHp; this.persist();
+      sfx('save'); this.fx.ring(o.x, o.y - 30, '#7fe8ff', 50); this.fx.burst(o.x, o.y - 30, 20, '#7fe8ff');
+      this.popup = { title: 'TERMINAL DE MEMORIA', body: 'Recuerdos guardados. Integridad restaurada.', t: 0 };
+    } else if (o.type === 'npc') {
+      const n = NPCS[o.id];
+      this.dialog = { name: n.name, role: n.role, lines: n.talk(s), i: 0, chars: 0, t: 0 };
+    } else if (o.type === 'record') {
+      this.dialog = { name: 'GRABACIÓN', role: 'Holograma', lines: RECORDS[o.id], i: 0, chars: 0, t: 0 };
+    } else if (o.type === 'elevator') {
+      if (!o.on) { this.popup = { title: 'ASCENSOR', body: 'No responde. Falta energía en algún lugar del parque.', t: 0 }; return; }
+      sfx('elevator'); this.travel = { to: o.to, from: this.room.id, t: 0 };
+    }
+  }
+
+  collect(o) {
+    const s = this.save;
+    o.dead = true;
+    this.fx.burst(o.x, o.y - 16, 30, o.type === 'memory' ? '#9fd6ff' : '#ffe08a', 3); this.fx.ring(o.x, o.y - 16, '#ffffff', 40);
+    if (o.type === 'item') {
+      s.abilities[o.ability] = true; sfx('relic'); this.hitstop(20);
+      const [title, body] = ITEMS[o.ability];
+      this.popup = { title, body, t: 0 };
+      if (o.ability === 'key') this.unlockSeals(true);
+    } else if (o.type === 'memory') {
+      s.memories.push(o.n); sfx('memory');
+      const [title, body] = MEMORIES[o.n];
+      this.popup = { title, body, t: 0, memory: true };
+    } else if (o.type === 'core') {
+      s.cores.push(o.n); s.maxHp++; this.hero.maxHp++; this.hero.hp = this.hero.maxHp; sfx('pickup');
+      this.popup = { title: ITEMS.core[0], body: ITEMS.core[1], t: 0 };
+    }
+    this.persist();
+  }
+
+  // ───────────── Bucle ─────────────
   update() {
     this.input.update();
     this.t++;
-    if (this.input.pressed('mute')) { const m = toggleMute(); this.toast = { text: m ? 'SONIDO: NO' : 'SONIDO: SÍ', t: 60 }; }
-
+    if (this.input.pressed('mute')) this.say(toggleMute() ? 'Sonido desactivado' : 'Sonido activado', 60);
     if (this.state === 'title') return this.updateTitle();
     if (this.state === 'intro') return this.updateIntro();
-    if (this.state === 'message') {
-      this.message.t++;
-      if (this.message.t > 40 && (this.input.pressed('jump') || this.input.pressed('attack') || this.input.pressed('start'))) { this.state = 'play'; sfx('select'); }
-      return;
-    }
-    if (this.state === 'pause') {
-      if (this.input.pressed('start') || this.input.pressed('map')) { this.state = 'play'; sfx('select'); }
-      return;
-    }
+    if (this.state === 'ending') return this.updateEnding();
+    if (this.state === 'pause') { if (this.input.pressed('start') || this.input.pressed('map')) { this.state = 'play'; sfx('select'); } return; }
     if (this.state === 'dead') {
-      this.deadT++;
-      this.updateParticles();
-      if (this.deadT > 150) { this.saved = loadSave(); this.start(!!this.saved); }
+      this.deadT++; this.hero.update(this); this.fx.update();
+      if (this.deadT > 170) { this.saved = loadSave() || this.saved; this.start(!!this.saved); }
       return;
     }
-    if (this.state === 'ending') {
-      this.endT++;
-      this.updateParticles();
-      if (this.endT % 4 === 0) this.particle(Math.random() * W + this.camX, this.camY + H, (Math.random() - 0.5) * 0.3, -0.5 - Math.random(), 160, Math.random() < 0.5 ? PAL.o : PAL.y, -0.002);
-      if (this.endT > 400 && (this.input.pressed('jump') || this.input.pressed('start'))) { this.state = 'title'; this.saved = loadSave(); }
+    // ventanas modales
+    if (this.popup) {
+      this.popup.t++;
+      if (this.popup.t > 40 && (this.input.pressed('jump') || this.input.pressed('attack') || this.input.pressed('up') || this.input.pressed('start'))) { this.popup = null; sfx('select'); }
       return;
     }
-
+    if (this.dialog) {
+      const d = this.dialog; d.t++;
+      const full = d.lines[d.i];
+      if (d.chars < full.length) { d.chars += 1.2; if (d.t % 3 === 0) sfx('text'); }
+      if (this.input.pressed('jump') || this.input.pressed('attack') || this.input.pressed('up')) {
+        if (d.chars < full.length) d.chars = full.length;
+        else if (++d.i >= d.lines.length) this.dialog = null;
+        else d.chars = 0;
+      }
+      return;
+    }
+    if (this.travel) {
+      const tr = this.travel; tr.t++;
+      if (tr.t === 40) {
+        const dest = this.byId[tr.to];
+        const el = dest.ents.find((e) => e.type === 'elevator' && e.to === tr.from) || dest.ents.find((e) => e.type === 'elevator');
+        this.hero.x = el.x * 16 + 8 - 6; this.hero.y = el.y * 16 - 36; this.hero.vx = this.hero.vy = 0;
+        this.enterRoom(dest); this.snapCamera();
+      }
+      if (tr.t >= 80) this.travel = null;
+      return;
+    }
     if (this.input.pressed('start') || this.input.pressed('map')) { this.state = 'pause'; sfx('select'); return; }
 
     this.save.time++;
     if (this.stop > 0) { this.stop--; return; }
     if (this.fade > 0) this.fade--;
+    if (this.shakeT > 0) this.shakeT--; else this.shakeP = 0;
+    if (this.banner) { this.banner.t++; if (this.banner.t > 260) this.banner = null; }
+    if (this.bossBanner) { this.bossBanner.t++; if (this.bossBanner.t > 200) this.bossBanner = null; }
+    if (this.sub) this.sub.t--;
+    if (this.boss && this.boss.state !== 'sleep') this.bossBarT++;
 
-    const p = this.player;
-    if (this.respawnT > 0) {
-      if (--this.respawnT === 0) { p.x = p.lastSafe.x; p.y = p.lastSafe.y; p.vx = p.vy = 0; p.hurtT = 0; this.fade = 10; }
-    } else {
-      p.update(this);
-    }
+    const h = this.hero;
+    if (this.respawnT > 0) { if (--this.respawnT === 0) { h.x = h.lastSafe.x; h.y = h.lastSafe.y; h.vx = h.vy = 0; h.hurtT = 0; this.fade = 12; } }
+    else h.update(this);
     this.checkTransition();
 
     for (const e of this.enemies) {
       e.update(this);
-      if (!e.dead && e.state !== 'sleep' && e.state !== 'dying' && overlap(e, p)) this.hurtPlayer(e.damage, e.x + e.w / 2);
+      if (!e.dead && !e.harmless && overlap(e, h)) this.hurtHero(e.damage, e.cx);
+      if (e.y > this.room.H * 16 + 40) e.dead = true;
     }
     this.enemies = this.enemies.filter((e) => !e.dead);
-    for (const pr of this.projectiles) pr.update(this);
-    this.projectiles = this.projectiles.filter((x) => !x.dead);
-    for (const pk of this.pickups) pk.update(this);
-    this.pickups = this.pickups.filter((x) => !x.dead);
+    if (this.boss) this.boss.update(this);
+    for (const p of this.projectiles) p.update(this);
+    this.projectiles = this.projectiles.filter((p) => !p.dead);
+    for (const o of this.orbs) o.update(this);
+    this.orbs = this.orbs.filter((o) => !o.dead);
 
-    // Santuarios: arriba para guardar
-    this.nearShrine = null;
-    for (const s of this.shrines) {
-      if (overlap(s, p)) {
-        this.nearShrine = s;
-        if (this.input.pressed('up')) this.doSave(s);
-      }
+    // objetos: interacción y recogida
+    this.near = null;
+    for (const o of this.objs) {
+      o.update(this);
+      if (o.dead || o.hidden) continue;
+      if (o instanceof Pickup) { if (overlap(o.box, h)) this.collect(o); }
+      else if (o.near(h) && h.onGround) { this.near = o; }
     }
-    if (this.altar && overlap(this.altar, p) && this.input.pressed('up')) this.beginEnding();
-    this.nearAltar = this.altar && overlap(this.altar, p);
+    this.objs = this.objs.filter((o) => !o.dead);
+    if (this.near && this.input.pressed('up')) this.interact(this.near);
 
-    this.updateParticles();
+    this.fx.update();
     this.updateCamera();
-    if (this.banner && --this.banner.t <= 0) this.banner = null;
-    if (this.toast && --this.toast.t <= 0) this.toast = null;
-    if (this.shakeT > 0) this.shakeT--;
-  }
-
-  updateParticles() {
-    for (const q of this.particles) { q.x += q.vx; q.y += q.vy; q.vy += q.grav; q.vx *= 0.98; q.life--; }
-    this.particles = this.particles.filter((q) => q.life > 0);
+    if (this.endingT) { this.endingT++; if (this.endingT > 420 && !this.objs.some((o) => o.type === 'memory')) this.beginEnding(); if (this.endingT > 900) this.beginEnding(); }
   }
 
   updateCamera() {
-    const p = this.player, r = this.room;
-    const tx = Math.max(0, Math.min(r.w * 16 - W, p.cx - W / 2 + p.facing * 16));
-    const ty = Math.max(0, Math.min(r.h * 16 - H, p.cy - H / 2 - 8));
-    this.camX += (tx - this.camX) * 0.12;
-    this.camY += (ty - this.camY) * 0.12;
+    const h = this.hero, r = this.room;
+    this.look = (this.look || 0) + ((h.face * 40) - (this.look || 0)) * 0.03;
+    const tx = Math.max(0, Math.min(r.W * 16 - W, h.cx - W / 2 + this.look));
+    const ty = Math.max(0, Math.min(r.H * 16 - H, h.cy - H / 2 - 16));
+    this.camX += (tx - this.camX) * 0.1; this.camY += (ty - this.camY) * (h.vy > 4 ? 0.2 : 0.1);
   }
 
-  beginEnding() {
-    this.state = 'ending'; this.endT = 0;
-    sfx('relic');
-    playMusic(MUSIC.end);
-    this.save.finished = true;
-    this.save.room = 'altar';
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.save)); } catch {}
-  }
-
+  // ───────────── Título, intro y final ─────────────
+  titleOptions() { return this.saved && !this.saved.finished ? ['CONTINUAR', 'NUEVA PARTIDA'] : ['NUEVA PARTIDA']; }
   updateTitle() {
     const opts = this.titleOptions();
     if (this.input.pressed('up') || this.input.pressed('down')) { this.menu = (this.menu + 1) % opts.length; sfx('select'); }
     if (this.input.pressed('jump') || this.input.pressed('start') || this.input.pressed('attack')) {
-      unlockAudio();
-      sfx('save');
+      unlockAudio(); sfx('save');
       if (opts[this.menu] === 'CONTINUAR') this.start(true);
-      else { this.state = 'intro'; this.introT = 0; playMusic(MUSIC.garden); }
+      else { this.state = 'intro'; this.introT = 0; playMusic('title'); }
     }
   }
-  titleOptions() { return this.saved && !this.saved.finished ? ['CONTINUAR', 'NUEVA PARTIDA'] : ['NUEVA PARTIDA']; }
-
   updateIntro() {
     this.introT++;
-    if (this.introT > 30 && (this.input.pressed('jump') || this.input.pressed('start') || this.input.pressed('attack'))) {
-      if (this.introT < 520) this.introT = 520; else { try { localStorage.removeItem(SAVE_KEY); } catch {} this.start(false); }
+    if (this.introT > 20 && (this.input.pressed('jump') || this.input.pressed('start') || this.input.pressed('attack'))) {
+      if (this.introT < INTRO.length * 150) this.introT = INTRO.length * 150; else { try { localStorage.removeItem(SAVE_KEY); } catch {} this.saved = null; this.start(false); }
     }
-    if (this.introT > 900) { try { localStorage.removeItem(SAVE_KEY); } catch {} this.start(false); }
+    if (this.introT > INTRO.length * 150 + 300) { try { localStorage.removeItem(SAVE_KEY); } catch {} this.saved = null; this.start(false); }
+  }
+  beginEnding() {
+    if (this.state === 'ending') return;
+    this.state = 'ending'; this.endT = 0; this.endLines = ending(this.save.memories.length);
+    this.save.finished = true; this.persist(); playMusic('ending'); setAmbience(null);
+  }
+  updateEnding() {
+    this.endT++;
+    if (this.endT > this.endLines.length * 180 + 400 && (this.input.pressed('jump') || this.input.pressed('start'))) { this.state = 'title'; this.saved = loadSave(); this.menu = 0; }
   }
 
-  // ---------- Dibujo ----------
+  // ───────────── Dibujo ─────────────
   draw() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
     if (this.state === 'title') return this.drawTitle();
     if (this.state === 'intro') return this.drawIntro();
+    if (this.state === 'ending') return this.drawEnding();
     this.drawWorld();
-    this.drawHUD();
-    if (this.state === 'pause') this.drawMap();
-    if (this.state === 'message') this.drawMessage();
-    if (this.state === 'dead') this.drawDead();
-    if (this.state === 'ending') this.drawEnding();
-    if (this.fade > 0) { ctx.fillStyle = gba(PAL.k); ctx.globalAlpha = Math.min(1, this.fade / 8); ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+    drawHUD(ctx, this);
+    if (this.banner) drawZoneBanner(ctx, this.banner.zone, this.banner.t);
+    if (this.bossBanner) this.drawBossBanner();
+    drawSubtitle(ctx, this.sub);
+    if (this.near && !this.dialog && !this.popup && this.state === 'play') drawPrompt(ctx, this.near.x - this.camX, this.near.y - 50 - this.camY, this.near.prompt, this.t);
+    if (this.dialog) drawDialog(ctx, this.dialog);
+    if (this.popup) drawPopup(ctx, this.popup, this.t);
+    if (this.state === 'pause') drawMap(ctx, this, this.t);
+    if (this.state === 'dead') {
+      ctx.fillStyle = `rgba(4,2,8,${Math.min(0.9, this.deadT / 80)})`; ctx.fillRect(0, 0, W, H);
+      if (this.deadT > 50) text(ctx, 'TU MEMORIA SE APAGA', W / 2, H / 2, 16, '#c06060', 'center', { font: FONT_TITLE, weight: 'bold' });
+    }
+    let f = this.fade / 10;
+    if (this.travel) f = this.travel.t < 40 ? this.travel.t / 40 : 1 - (this.travel.t - 40) / 40;
+    if (f > 0) { ctx.fillStyle = `rgba(4,2,8,${Math.min(1, f)})`; ctx.fillRect(0, 0, W, H); }
   }
 
   drawWorld() {
-    const r = this.room, area = AREAS[r.area];
+    const r = this.room, z = ZONES[r.zone], c = this.cache[r.id], t = this.t;
     let sx = 0, sy = 0;
-    if (this.shakeT > 0) { sx = ((Math.random() * 2 - 1) * this.shakeP) | 0; sy = ((Math.random() * 2 - 1) * this.shakeP) | 0; }
+    if (this.shakeT > 0) { sx = Math.round((Math.random() * 2 - 1) * this.shakeP); sy = Math.round((Math.random() * 2 - 1) * this.shakeP); }
     const cx = Math.round(this.camX) - sx, cy = Math.round(this.camY) - sy;
-    drawBackground(ctx, this.backgrounds[r.area], r.px + cx, cy, this.t);
-
-    // Motas ambientales (luciérnagas, polvo de cristal, ascuas)
-    ctx.fillStyle = gba(area.mote);
-    for (const m of this.motes) {
-      m.p += 0.02;
-      m.x += Math.sin(m.p) * 0.2 + (r.area === 'keep' ? 0.05 : 0);
-      m.y += r.area === 'keep' ? -0.25 : Math.cos(m.p * 0.7) * 0.15;
-      if (m.y < 0) m.y = r.h * 16; if (m.x < 0) m.x = r.w * 16; if (m.x > r.w * 16) m.x = 0;
-      if (Math.sin(m.p * 3) > -0.3) ctx.fillRect(Math.round(m.x - cx), Math.round(m.y - cy), 1, 1);
-    }
-
-    this.drawDecor(cx, cy, false);
-    ctx.drawImage(this.tileCanvas, -cx, -cy);
-
-    for (const s of this.shrines) {
-      ctx.drawImage(SHRINE, s.x - cx, s.y - cy);
-      ctx.drawImage(FLAME[Math.floor(this.t / 6) % 3], s.x + 4 - cx, s.y + 3 + Math.round(Math.sin(this.t * 0.05) * 1.5) - cy);
-    }
-    if (this.altar) {
-      const a = this.altar;
-      ctx.drawImage(ALTAR, a.x - cx, a.y - cy);
-      if (this.state === 'ending') {
-        const f = FLAME[Math.floor(this.t / 5) % 3];
-        ctx.drawImage(f, a.x + 8 - cx, a.y - 10 - cy, 16, 14);
-      }
-    }
-    for (const pk of this.pickups) pk.draw(ctx, cx, cy);
-    for (const e of this.enemies) e.draw(ctx, cx, cy);
-    if (!(this.state === 'dead' && this.deadT > 50) && !(this.respawnT > 0 && this.respawnT < 14)) this.player.draw(ctx, cx, cy);
-    for (const pr of this.projectiles) pr.draw(ctx, cx, cy);
-    for (const q of this.particles) {
-      ctx.fillStyle = q.color;
-      ctx.fillRect(Math.round(q.x - cx), Math.round(q.y - cy), q.life > q.max * 0.5 ? 2 : 1, q.life > q.max * 0.5 ? 2 : 1);
-    }
-    this.drawDecor(cx, cy, true);
-    this.drawLighting(cx, cy);
-
-    // Indicadores de interacción
-    if (this.nearShrine && this.state === 'play') drawTextC(ctx, '^ GUARDAR', this.nearShrine.x + 8 - cx, this.nearShrine.y - 4 - cy, PAL.y);
-    if (this.nearAltar && this.state === 'play') drawTextC(ctx, '^ ENCENDER', this.altar.x + 16 - cx, this.altar.y - 2 - cy, PAL.y);
-    if (r.id === 'santuario' && this.state === 'play') {
-      const keyb = this.input.lastDevice !== 'touch';
-      drawTextC(ctx, keyb ? 'FLECHAS: MOVER' : 'CRUCETA: MOVER', 120 - cx, 66 - cy, PAL.g);
-      drawTextC(ctx, keyb ? 'Z: SALTAR   X: ATACAR' : 'A: SALTAR   B: ATACAR', 120 - cx, 74 - cy, PAL.g);
-      drawTextC(ctx, keyb ? 'ENTER: MAPA' : 'START: MAPA', 120 - cx, 82 - cy, PAL.g);
-    }
-  }
-
-  drawDecor(cx, cy, front) {
-    const r = this.room, area = AREAS[r.area];
-    for (const d of r.decor) {
-      const x = d.i * 16 - cx, y = d.j * 16 - cy;
-      if (x < -32 || x > W + 32 || y < -48 || y > H + 32) continue;
-      if (d.type === 'v' && !front) {
-        // Enredadera colgante con balanceo
-        const len = 14 + ((d.i * 7 + d.j * 3) % 18);
-        for (let k = 0; k < len; k++) {
-          const sw = Math.round(Math.sin(this.t * 0.03 + k * 0.25 + d.i) * (k / len) * 2);
-          ctx.fillStyle = gba(area.accent[k % 5 === 0 ? 2 : 1]);
-          ctx.fillRect(x + 7 + sw, y + k, 1, 1);
-          if (k % 4 === 2) { ctx.fillStyle = gba(area.accent[2]); ctx.fillRect(x + 8 + sw, y + k, 1, 1); }
-          if (k % 6 === 4) { ctx.fillStyle = gba(area.accent[1]); ctx.fillRect(x + 6 + sw, y + k, 1, 1); }
-        }
-      } else if (d.type === 't' && !front) {
-        ctx.drawImage(TORCH, x + 4, y + 6);
-        ctx.drawImage(FLAME[Math.floor(this.t / 5 + d.i) % 3], x + 4, y - 1);
-      } else if (d.type === 'g' && front) {
-        for (let k = 0; k < 5; k++) {
-          const bx = x + 2 + k * 3, h = 3 + ((k * 5 + d.i) % 4);
-          const sw = Math.sin(this.t * 0.05 + k + d.i) > 0.6 ? 1 : 0;
-          ctx.fillStyle = gba(area.accent[k % 2 ? 2 : 1]);
-          for (let m = 0; m < h; m++) ctx.fillRect(bx + (m > h - 2 ? sw : 0), y + 16 - m - 1, 1, 1);
-        }
-      } else if (d.type === 'r' && !front) {
-        // Racimo de cristales
-        const c = area.accent;
-        const cr = [[4, 8, 3], [8, 4, 4], [12, 9, 2]];
-        for (const [ox, h, w] of cr) {
-          for (let m = 0; m < 16 - h; m++) {
-            const ww = Math.min(w, Math.ceil(m / 2) + 1);
-            ctx.fillStyle = gba(c[2]); ctx.fillRect(x + ox - (ww >> 1), y + h + m, ww, 1);
-            ctx.fillStyle = gba(c[3]); ctx.fillRect(x + ox - (ww >> 1), y + h + m, 1, 1);
-          }
-        }
-        if ((this.t + d.i * 13) % 90 < 6) { ctx.fillStyle = gba(PAL.w); ctx.fillRect(x + 8, y + 5, 1, 1); }
-      }
-    }
-  }
-
-  drawLighting(cx, cy) {
-    const r = this.room;
+    // fondo
+    if (c.back) ctx.drawImage(c.back, -cx, -cy);
+    else drawParallax(ctx, this.bgs[r.zone], r.px + cx, cy, r.H * 16);
     const lights = [];
-    for (const d of r.decor) if (d.type === 't') lights.push([d.i * 16 + 8, d.j * 16 + 4, GLOW.torch]);
-    for (const d of r.decor) if (d.type === 'r') lights.push([d.i * 16 + 8, d.j * 16 + 10, GLOW.blue]);
-    for (const s of this.shrines) lights.push([s.x + 8, s.y + 6, GLOW.big]);
-    if (this.altar && this.state === 'ending') lights.push([this.altar.x + 16, this.altar.y, GLOW.big]);
-
-    // Brillo aditivo tramado
-    ctx.globalCompositeOperation = 'lighter';
-    for (const [lx, ly, g] of lights) {
-      ctx.globalAlpha = 0.28 + Math.sin(this.t * 0.2 + lx) * 0.03;
-      ctx.drawImage(g, Math.round(lx - g.width / 2 - cx), Math.round(ly - g.height / 2 - cy));
+    const pushL = (L) => { if (!L) return; const x = L.x - cx, y = L.y - cy; if (x < -L.r || x > W + L.r || y < -L.r || y > H + L.r) return; lights.push({ ...L, x, y }); };
+    // decorados de fondo
+    for (const d of this.decos) {
+      if (d.layer !== 'bg') continue;
+      this.drawDeco(d, cx, cy, t, pushL);
     }
+    if (this.boss && this.boss.behind) this.boss.draw(ctx, cx, cy, t);
+    ctx.drawImage(c.tiles, -cx, -cy);
+    this.drawGates(cx, cy);
+    for (const o of this.objs) { o.draw(ctx, cx, cy, t); for (const L of o.lights()) pushL(L); }
+    for (const e of this.enemies) { e.draw(ctx, cx, cy, t); for (const L of e.lights()) pushL(L); }
+    if (this.boss && !this.boss.behind && this.boss.state !== 'dead') this.boss.draw(ctx, cx, cy, t);
+    if (this.boss) for (const L of this.boss.lights()) pushL(L);
+    const h = this.hero;
+    if (!(this.respawnT > 0 && this.respawnT < 16)) h.draw(ctx, cx, cy, t);
+    if (!h.dead) { pushL({ x: h.cx + h.face * 3, y: h.y + 6, r: 54, col: '#7fe8ff', i: 0.9 }); pushL({ x: h.cx, y: h.cy, r: 110, col: '#9ab0c8', i: 0.55, add: 0.2 }); }
+    for (const p of this.projectiles) { p.draw(ctx, cx, cy, t); pushL(p.light()); }
+    for (const o of this.orbs) { o.draw(ctx, cx, cy); pushL(o.light()); }
+    if (this.boss && this.boss.drawFront) this.boss.drawFront(ctx, cx, cy);
+    for (const d of this.decos) if (d.layer === 'fg') this.drawDeco(d, cx, cy, t, pushL);
+    this.fx.draw(ctx, cx, cy, (s, x, y, col) => text(ctx, s, x, y, 8, col, 'center'));
+    this.fx.ambient(z.particles, t, this.camX, this.camY);
+    this.fx.drawAmbient(ctx);
+    const extra = this.boss?.extraDark?.() || 0;
+    postProcess(ctx, cv, z, lights, t, r.px + cx, cy, { extraDark: extra });
+  }
+
+  drawDeco(d, cx, cy, t, pushL) {
+    const def = d.def, X = d.X - cx, Y = d.Y - cy, img = def.img;
+    const x0 = Math.round(X - def.ax), y0 = Math.round(Y - (def.hang ? 0 : def.ay) + (def.hang ? 0 : 0));
+    if (x0 > W + 20 || x0 + img.width < -20 || y0 > H + 20 || y0 + img.height < -20) {
+      for (const L of def.light || []) pushL({ ...L, x: d.X + L.dx, y: d.Y + L.dy, r: L.r });
+      return;
+    }
+    if (def.dim) ctx.globalAlpha = def.dim;
+    if (def.sway) { const s = Math.round(Math.sin(t * 0.02 + d.X) * 1.5); ctx.drawImage(img, x0 + s, y0); }
+    else ctx.drawImage(img, x0, y0);
     ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-
-    // Oscuridad en cavernas y fortaleza, con huecos de luz
-    const dark = r.area === 'cavern' ? 0.6 : r.area === 'keep' ? 0.32 : 0.12;
-    const [dc, dx] = this.darkness;
-    dx.globalCompositeOperation = 'source-over';
-    dx.clearRect(0, 0, W, H);
-    dx.fillStyle = gba(PAL.k);
-    dx.fillRect(0, 0, W, H);
-    dx.globalCompositeOperation = 'destination-out';
-    const p = this.player;
-    const pl = [[p.cx, p.cy, GLOW.player], ...lights];
-    for (const pr of this.projectiles) pl.push([pr.x + 2, pr.y + 2, GLOW.ember]);
-    for (const pk of this.pickups) pl.push([pk.x + 5, pk.y + 5, GLOW.blue]);
-    for (const [lx, ly, g] of pl) {
-      const s = g === GLOW.player ? 2.2 : 1.6;
-      dx.drawImage(g, Math.round(lx - (g.width * s) / 2 - cx), Math.round(ly - (g.height * s) / 2 - cy), g.width * s, g.height * s);
+    if (def.anim) def.anim(ctx, X, Y, t, img);
+    for (const L of def.light || []) {
+      let i = 1;
+      if (L.flicker) i = 1 - L.flicker + Math.random() * L.flicker * 2;
+      if (L.pulse) i = 0.3 + Math.max(0, Math.sin(t * 0.12)) * 0.9;
+      pushL({ x: d.X + L.dx, y: d.Y + L.dy, r: L.r * (0.9 + i * 0.1), col: L.col, i });
     }
-    ctx.globalAlpha = dark;
-    ctx.drawImage(dc, 0, 0);
+  }
+
+  drawGates(cx, cy) {
+    const r = this.room;
+    for (const d of r.doors) {
+      if (d.side !== 'L' && d.side !== 'R') continue;
+      const i = d.side === 'L' ? 1 : r.W - 2;
+      if (r.tiles[d.start][i] !== 'G') continue;
+      const x = i * 16 - cx, y = d.start * 16 - cy;
+      ctx.fillStyle = '#0b0810'; ctx.fillRect(x, y, 16, d.size * 16);
+      for (let k = 1; k < 16; k += 5) { ctx.fillStyle = '#5a5e68'; ctx.fillRect(x + k, y, 3, d.size * 16); ctx.fillStyle = '#a8aeb8'; ctx.fillRect(x + k, y, 1, d.size * 16); }
+      ctx.fillStyle = '#8a1f2a'; ctx.fillRect(x, y + 8, 16, 3);
+    }
+  }
+
+  drawBossBanner() {
+    const b = this.bossBanner, a = Math.min(1, b.t / 20, (200 - b.t) / 30);
+    ctx.globalAlpha = Math.max(0, a);
+    const y = 196;
+    const gr = ctx.createLinearGradient(0, 0, W, 0); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.5, 'rgba(20,0,0,0.7)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gr; ctx.fillRect(0, y - 22, W, 46);
+    text(ctx, b.name, W / 2, y - 4, 20, '#e8c8a0', 'center', { font: FONT_TITLE, weight: 'bold' });
+    text(ctx, b.title, W / 2, y + 16, 8, '#b09080', 'center');
     ctx.globalAlpha = 1;
-  }
-
-  drawHUD() {
-    const p = this.player;
-    for (let k = 0; k < p.maxHp; k++) {
-      ctx.drawImage(k < p.hp ? HUD_FLAME : HUD_FLAME_EMPTY, 4 + k * 9, 4 + (k < p.hp && (this.t + k * 7) % 50 < 4 ? -1 : 0));
-    }
-    let ix = 4;
-    if (p.abilities.double) { ctx.drawImage(ORB, ix, 15); ix += 12; }
-    if (p.abilities.dash) { ctx.drawImage(ORB_FIRE, ix, 15); }
-
-    if (this.banner) {
-      const b = this.banner, a = Math.min(1, b.t / 30, (150 - b.t) / 20);
-      ctx.globalAlpha = Math.max(0, a);
-      const y = b.boss ? 120 : 30;
-      const w = textWidth(b.text) + 16;
-      ctx.fillStyle = gba(PAL.k);
-      ctx.fillRect(120 - w / 2, y - 5, w, 15);
-      ctx.fillStyle = gba(b.boss ? PAL.r : PAL.y);
-      ctx.fillRect(120 - w / 2, y - 5, w, 1); ctx.fillRect(120 - w / 2, y + 9, w, 1);
-      drawTextC(ctx, b.text, 120, y, b.boss ? PAL.r : PAL.w);
-      ctx.globalAlpha = 1;
-    }
-    if (this.toast) drawTextC(ctx, this.toast.text, 120, 140, PAL.y);
-
-    // Barra de vida del jefe
-    const b = this.boss;
-    if (b && !b.dead && b.state !== 'sleep') {
-      ctx.fillStyle = gba(PAL.k); ctx.fillRect(40, 148, 160, 6);
-      ctx.fillStyle = gba(PAL.d); ctx.fillRect(41, 149, 158, 4);
-      ctx.fillStyle = gba(b.phase2 ? PAL.o : PAL.r); ctx.fillRect(41, 149, Math.round(158 * b.hp / b.maxHp), 4);
-      ctx.fillStyle = gba(PAL.y); ctx.fillRect(41, 149, Math.round(158 * b.hp / b.maxHp), 1);
-    }
-  }
-
-  drawMap() {
-    ctx.fillStyle = gba(PAL.k);
-    ctx.globalAlpha = 0.85; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
-    drawTextC(ctx, 'MAPA', 120, 10, PAL.y);
-    const cw = 24, ch = 16, ox = 120 - (7 * cw) / 2, oy = 34;
-    const colors = { garden: '#346524', cavern: '#2f5279', keep: '#8a2b3b' };
-    for (const r of this.rooms) {
-      if (!this.save.visited.includes(r.id)) continue;
-      const x = ox + r.x * cw, y = oy + r.y * ch, w = (r.w / SCREEN_W) * cw, h = (r.h / SCREEN_H) * ch;
-      ctx.fillStyle = gba(PAL.w); ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = gba(colors[r.area]); ctx.fillRect(x + 1, y + 1, w - 2, h - 2);
-      if (r.spawns.some((s) => s.type === 'S')) { ctx.fillStyle = gba(PAL.y); ctx.fillRect(x + w / 2 - 1, y + h / 2 - 1, 3, 3); }
-      if (r.boss && !this.save.bossDead) { ctx.fillStyle = gba(PAL.r); ctx.fillRect(x + w / 2 - 1, y + h / 2 - 1, 3, 3); }
-    }
-    // Posición del jugador
-    const p = this.player, r = this.room;
-    if (this.t % 30 < 20) {
-      ctx.fillStyle = gba(PAL.c);
-      ctx.fillRect(ox + r.x * cw + Math.floor((p.cx / (SCREEN_W * 16)) * cw) - 1, oy + r.y * ch + Math.floor((p.cy / (SCREEN_H * 16)) * ch) - 1, 3, 3);
-    }
-    const pct = Math.round((this.save.taken.length / TOTAL_ITEMS) * 100);
-    drawText(ctx, `OBJETOS ${pct}%`, 8, 140, PAL.g);
-    drawText(ctx, `TIEMPO ${fmtTime(this.save.time)}`, 8, 148, PAL.g);
-    drawText(ctx, 'N: SONIDO', 190, 148, PAL.G);
-    drawTextC(ctx, AREAS[r.area].name, 120, 20, PAL.w);
-  }
-
-  drawMessage() {
-    const m = this.message, n = m.lines.length;
-    const h = 14 + n * 9;
-    const y = 80 - h / 2;
-    ctx.fillStyle = gba(PAL.k); ctx.fillRect(30, y, 180, h);
-    ctx.fillStyle = gba(PAL.y); ctx.fillRect(30, y, 180, 1); ctx.fillRect(30, y + h - 1, 180, 1);
-    ctx.fillRect(30, y, 1, h); ctx.fillRect(209, y, 1, h);
-    m.lines.forEach((l, k) => drawTextC(ctx, l, 120, y + 7 + k * 9, k === 0 ? PAL.y : PAL.w));
-  }
-
-  drawDead() {
-    const a = Math.min(1, this.deadT / 60);
-    ctx.fillStyle = gba(PAL.k);
-    ctx.globalAlpha = a * 0.9; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
-    if (this.deadT > 40) drawTextC(ctx, 'TU LLAMA SE APAGA...', 120, 76, PAL.r);
-  }
-
-  drawEnding() {
-    const a = Math.min(1, Math.max(0, (this.endT - 60) / 120));
-    ctx.fillStyle = gba(PAL.k);
-    ctx.globalAlpha = a * 0.75; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
-    for (const q of this.particles) { ctx.fillStyle = q.color; ctx.fillRect(Math.round(q.x - this.camX), Math.round(q.y - this.camY), 1, 1); }
-    if (this.endT > 120) {
-      drawTextC(ctx, 'EL GRAN FUEGO VUELVE A ARDER', 120, 50, PAL.y);
-      if (this.endT > 200) drawTextC(ctx, 'Y EL REINO DESPIERTA DE SU LARGO INVIERNO.', 120, 62, PAL.w);
-      if (this.endT > 280) {
-        drawTextC(ctx, `TIEMPO ${fmtTime(this.save.time)}`, 120, 84, PAL.g);
-        drawTextC(ctx, `OBJETOS ${Math.round((this.save.taken.length / TOTAL_ITEMS) * 100)}%`, 120, 93, PAL.g);
-      }
-      if (this.endT > 400 && this.t % 60 < 40) drawTextC(ctx, 'GRACIAS POR JUGAR', 120, 120, PAL.c);
-    }
   }
 
   drawTitle() {
-    const bg = this.backgrounds.garden;
-    drawBackground(ctx, bg, this.t * 0.5, 0, this.t);
-    ctx.fillStyle = gba(PAL.k);
-    ctx.globalAlpha = 0.35; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
-    drawLogo(ctx, 120, 26);
-    const f = FLAME[Math.floor(this.t / 5) % 3];
-    ctx.drawImage(f, 116, 12 + Math.round(Math.sin(this.t * 0.05)));
-    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.35;
-    ctx.drawImage(GLOW.big, 120 - 40, 18 - 40);
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-    drawTextC(ctx, 'LA ÚLTIMA BRASA', 120, 60, PAL.E);
-
-    // Protagonista mirando al horizonte
-    const pf = PLAYER['idle' + (Math.floor(this.t / 30) % 2)];
-    ctx.drawImage(pf.r, 112, 112);
-    ctx.fillStyle = gba(AREAS.garden.stone[2]); ctx.fillRect(0, 132, W, 28);
-    ctx.fillStyle = gba(AREAS.garden.accent[2]); ctx.fillRect(0, 132, W, 1);
-
+    const z = ZONES.jardines;
+    if (!this.bgs.jardines) this.bgs.jardines = buildParallax('jardines', z);
+    drawParallax(ctx, this.bgs.jardines, this.t * 0.4, 40, 400);
+    ctx.fillStyle = 'rgba(10,6,16,0.45)'; ctx.fillRect(0, 0, W, H);
+    postProcess(ctx, cv, { ...z, dark: 0.3 }, [{ x: 360, y: 70, r: 120, col: '#ffd890' }], this.t, this.t * 0.4, 0, {});
+    const glow = glowSprite(64, '#ffb060');
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.25; ctx.drawImage(glow, W / 2 - 160, 10, 320, 110); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    text(ctx, 'PARADISE', W / 2, 62, 44, '#f2e2c4', 'center', { font: FONT_TITLE, weight: 'bold', shadow: '#2a1408' });
+    ctx.fillStyle = '#d8a43a'; ctx.fillRect(W / 2 - 110, 90, 220, 1);
+    text(ctx, 'LA HACIENDA NÁPOLES', W / 2, 102, 12, '#d8c0a0', 'center', { font: FONT_TITLE });
     const opts = this.titleOptions();
-    opts.forEach((o, k) => {
-      const sel = k === this.menu;
-      drawTextC(ctx, (sel ? '> ' : '  ') + o + (sel ? ' <' : '  '), 120, 80 + k * 10, sel ? PAL.w : PAL.g);
-    });
-    if (this.t % 60 < 40) drawTextC(ctx, this.input.lastDevice === 'touch' ? 'PULSA A' : 'PULSA Z O ENTER', 120, 102, PAL.c);
-    drawText(ctx, 'V1.0', 4, 152, PAL.G);
+    opts.forEach((o, k) => { const sel = k === this.menu; text(ctx, (sel ? '›  ' : '') + o + (sel ? '  ‹' : ''), W / 2, 150 + k * 16, 10, sel ? '#ffffff' : '#9a90a4', 'center'); });
+    if ((this.t >> 5) % 2) text(ctx, this.input.device === 'touch' ? 'PULSA A' : 'PULSA Z O ENTER', W / 2, 200, 8, '#7fe8ff', 'center');
+    text(ctx, 'PROTOTIPO · ARTE PROVISIONAL', 8, H - 10, 8, '#6a6274');
   }
 
   drawIntro() {
-    ctx.fillStyle = gba(PAL.k); ctx.fillRect(0, 0, W, H);
-    const lines = [
-      'HACE MIL INVIERNOS, EL GRAN FUEGO',
-      'SE APAGÓ Y EL REINO CAYÓ EN SOMBRAS.',
-      '',
-      'DE SUS CENIZAS QUEDÓ UNA SOLA BRASA:',
-      'TÚ.',
-      '',
-      'ATRAVIESA EL JARDÍN, LAS CAVERNAS Y',
-      'LA FORTALEZA, Y REAVIVA LA LLAMA.',
-    ];
-    lines.forEach((l, k) => {
-      const t0 = k * 60;
-      const a = Math.min(1, Math.max(0, (this.introT - t0) / 40));
+    ctx.fillStyle = '#05030a'; ctx.fillRect(0, 0, W, H);
+    INTRO.forEach((l, k) => {
+      const t0 = k * 150, a = Math.max(0, Math.min(1, (this.introT - t0) / 60));
       if (a <= 0) return;
       ctx.globalAlpha = a;
-      drawTextC(ctx, l, 120, 30 + k * 11, k === 4 ? PAL.o : PAL.w);
+      l.split('\n').forEach((ln, j) => text(ctx, ln, W / 2, 60 + k * 30 + j * 12, 10, k === INTRO.length - 1 ? '#ffd8a0' : '#d8d0c4', 'center', { font: FONT_TITLE }));
     });
     ctx.globalAlpha = 1;
-    const f = FLAME[Math.floor(this.t / 5) % 3];
-    ctx.drawImage(f, 116, 10);
-    if (this.introT > 520 && this.t % 60 < 40) drawTextC(ctx, 'PULSA PARA EMPEZAR', 120, 140, PAL.c);
+    if (this.introT > INTRO.length * 150 && (this.t >> 5) % 2) text(ctx, 'PULSA PARA DESPERTAR', W / 2, H - 24, 8, '#7fe8ff', 'center');
   }
-}
 
-// Logo con una fuente 5x7 propia, ampliada ×4 con degradado de fuego.
-const LOGO = {
-  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
-  U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
-  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
-  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
-  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
-  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
-};
-function drawLogo(c, cx, y) {
-  const word = 'LUMBRE', S = 4, lw = (word.length * 6 - 1) * S, x0 = Math.round(cx - lw / 2);
-  const rows = [PAL.y, PAL.y, PAL.o, PAL.o, PAL.o, PAL.r, PAL.R];
-  for (const pass of [0, 1, 2]) {
-    [...word].forEach((ch, n) => {
-      LOGO[ch].forEach((row, j) => {
-        for (let i = 0; i < 5; i++) {
-          if (row[i] !== '1') continue;
-          const x = x0 + (n * 6 + i) * S, yy = y + j * S;
-          if (pass === 0) { c.fillStyle = gba(PAL.d); c.fillRect(x - 1, yy + 2, S + 2, S + 2); }
-          else if (pass === 1) { c.fillStyle = gba(PAL.k); c.fillRect(x - 1, yy - 1, S + 2, S + 2); }
-          else {
-            c.fillStyle = gba(rows[j]); c.fillRect(x, yy, S, S);
-            if (j === 0 || row[i - 1] !== '1') { c.fillStyle = gba(j < 2 ? PAL.w : PAL.y); c.fillRect(x, yy, 1, 1); }
-          }
-        }
-      });
+  drawEnding() {
+    ctx.fillStyle = '#05030a'; ctx.fillRect(0, 0, W, H);
+    let y = 40;
+    this.endLines.forEach((l, k) => {
+      const a = Math.max(0, Math.min(1, (this.endT - k * 180) / 80));
+      const isLast = l.startsWith('—'), size = isLast ? 14 : 10;
+      const ls = wrap(l, size, W - 80, { font: FONT_TITLE });
+      if (a > 0) {
+        ctx.globalAlpha = a;
+        ls.forEach((ln, j) => text(ctx, ln, W / 2, y + j * (size + 3), size, isLast ? '#ffd8a0' : '#d8d0c4', 'center', { font: FONT_TITLE }));
+      }
+      y += ls.length * (size + 3) + 10;
     });
+    ctx.globalAlpha = 1;
+    const tEnd = this.endLines.length * 180 + 120;
+    if (this.endT > tEnd) {
+      ctx.globalAlpha = Math.min(1, (this.endT - tEnd) / 80);
+      text(ctx, 'FIN', W / 2, 220, 18, '#efe2c8', 'center', { font: FONT_TITLE, weight: 'bold' });
+      const m = Math.floor(this.save.time / 3600), s = Math.floor(this.save.time / 60) % 60;
+      text(ctx, `RECUERDOS ${this.save.memories.length}/8 · NÚCLEOS ${this.save.cores.length}/3 · ${m}:${String(s).padStart(2, '0')}`, W / 2, 244, 8, '#8a8296', 'center');
+      ctx.globalAlpha = 1;
+    }
   }
 }
 
-function fmtTime(frames) {
-  const s = Math.floor(frames / 60), m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
-
-// ---------- Arranque con paso fijo a 60 Hz ----------
+// ───────────── Arranque a paso fijo de 60 Hz ─────────────
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) document.body.classList.add('touch');
 resize();
 const game = new Game();
 window.__game = game;
 let acc = 0, last = performance.now();
 function frame(now) {
-  acc += Math.min(100, now - last);
-  last = now;
-  let steps = 0;
-  while (acc >= 1000 / 60 && steps < 5) { game.update(); acc -= 1000 / 60; steps++; }
+  acc += Math.min(100, now - last); last = now;
+  let n = 0;
+  while (acc >= 1000 / 60 && n < 4) { game.update(); acc -= 1000 / 60; n++; }
   game.draw();
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+// las fuentes web cambian el texto cacheado: esperamos un momento a que carguen
+const fontsReady = document.fonts ? Promise.all([document.fonts.load('bold 20px "Cinzel"'), document.fonts.load('10px "Cinzel"'), document.fonts.load('9px "Pixelify Sans"')]).catch(() => {}) : Promise.resolve();
+Promise.race([fontsReady, new Promise((r) => setTimeout(r, 2500))]).then(() => requestAnimationFrame(frame));

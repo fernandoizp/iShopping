@@ -36,7 +36,7 @@ Cada zona tiene un jefe. El mapa es un nudo: casi todas las zonas se enlazan ent
 
 Un **androide humanoide gris** que fue una persona. Murió como soldado en la **guerra que el gobernante provocó en Italia**.
 
-Después de la guerra, el gobernante lanzó un **software para "vivir para siempre"**: copiar los recuerdos de una persona a una máquina. Se vendió como un regalo al pueblo. En realidad era una jugada maquiavélica cuyo propósito real está por decidir **(?)** (control, mano de obra, un ejército que no muere, o su propia inmortalidad).
+Después de la guerra, el gobernante lanzó un **software para "vivir para siempre"**: copiar los recuerdos de una persona a una máquina. Se vendió como un regalo al pueblo. En realidad era una jugada maquiavélica. **Versión provisional implementada en el prototipo:** cada copia lleva escondida una orden de obediencia al *Sello del Patrón* (mano de obra y ejército que no muere), y el Patrón planeaba subir su propia mente a *La Máquina Eterna* para reinar para siempre. El protagonista despertó con un fallo en esa orden: no obedece. **(?)** Se puede cambiar.
 
 El protagonista despierta en ese cuerpo de máquina y viaja a la hacienda para saber qué pasó con el gobernante y qué le hicieron a él.
 
@@ -79,6 +79,18 @@ Buscas algo cercano a Blasphemous y Hollow Knight. Hay que ser claros sobre dón
 - **Para llegar de verdad al nivel de Blasphemous** hace falta arte hecho a mano o generado y retocado: personaje animado con muchos fotogramas, jefes grandes, fondos pintados. Ahí entran las herramientas que enlazaste (que necesitan correr en tu ordenador), un artista, o packs de assets.
 
 **Propuesta:** hacer una prueba visual de una sola sala (los Jardines) a mayor resolución, con luz, niebla y parallax, para decidir con una imagen y no a ciegas.
+
+## Estado del prototipo jugable
+
+Implementado en `src/` (todo procedural, a la espera del arte final):
+
+- 17 salas en 8 zonas: Jardines, Meseta, Poblado Ibérico, Gruta del Tesoro, Fiordo, Parque Tecnológico, Palacio y Sótanos.
+- Habilidades que abren el mapa: propulsor (doble salto), impulso, garras (salto en pared) y Sello del Patrón (abre el Palacio).
+- 4 jefes: el Gigante del Molino, el Cuélebre, el Centinela y El Patrón (La Máquina Eterna).
+- 8 enemigos, 3 NPCs, 8 recuerdos (el final cambia si los tienes todos), 3 núcleos de vida, terminales de guardado, ascensores, muros secretos.
+- Iluminación dinámica, niebla, bloom, partículas por zona, música y sonido sintetizados.
+
+**El arte es provisional.** Todos los sprites y escenarios se pueden sustituir por arte final sin tocar la lógica.
 
 ## Plan de trabajo sugerido
 
